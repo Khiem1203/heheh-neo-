@@ -5,7 +5,7 @@
 
 #include "config_pins.h"
 #include "motor_driver.h"
-#include "piezo_stage.h"
+#include "IR_stage.h"
 
 #define QUEUE_CAPACITY 24
 
@@ -68,13 +68,6 @@ static void beginNextMotorIfNeeded() {
   if (!dequeue(&motorNum)) {
     return;
   }
-
-  // Safety Check: Disable Tray 3
-  if (motorNum == 3) {
-    Serial.println("SAFETY: Tray 3 disabled. Skipping.");
-    return;
-  }
-
   activeMotorIdx = (uint8_t)(motorNum - 1);
   startMotorByIdx(activeMotorIdx);
   isRunning = true;
@@ -91,9 +84,6 @@ void motorDriverBegin() { //set up motors in1, in2, en for all motors
     ledcSetup(MOTOR_PWM_CHANNELS[i], MOTOR_PWM_FREQ_HZ, MOTOR_PWM_RES_BITS);
     ledcAttachPin(MOTOR_PINS[i].en, MOTOR_PWM_CHANNELS[i]);
   }
-
-  // Setup Laser Sensor
-  pinMode(LASER_PIN, INPUT_PULLUP);
 
   stopAll();
   clearQueue();
@@ -161,8 +151,6 @@ void motorDriverQueueFromCommand(const char *command) {
   Serial.println("OK QUEUED");
 }
 
-#include "take_data_pi.h"
-
 void motorDriverUpdate() {
   beginNextMotorIfNeeded();
 
@@ -170,32 +158,20 @@ void motorDriverUpdate() {
     return;
   }
 
-  static unsigned long motorStartTime = 0;
-  if (motorStartTime == 0) motorStartTime = millis();
+  // Shared single sensor for all motors:
+  // ignore an already-held LOW at motor start, then stop on the next touch.
+  if (waitForPiezoRelease) {
+    if (!IRStageTriggered()) {
+      waitForPiezoRelease = false;
+    }
+    return;
+  }
 
-  // HIGH = No Pill, LOW = Pill Detected
-  if (digitalRead(LASER_PIN) == LOW) {
+  if (IRStageTriggered()) {
     stopMotorByIdx(activeMotorIdx);
-    Serial.printf("DONE M%d (SENSOR)\n", activeMotorIdx + 1);
-
-    // Send "Dispensed" status back to MQTT
-    char statusMsg[32];
-    snprintf(statusMsg, sizeof(statusMsg), "dispensed_ok_tray_%d", activeMotorIdx + 1);
-    takeDataPiPublish("ecyce/medilink/status", statusMsg);
-    // Support generic dispensed_ok for simpler listeners
-    takeDataPiPublish("ecyce/medilink/status", "dispensed_ok");
-
+    Serial.printf("DONE M%d\n", activeMotorIdx + 1);
     isRunning = false;
-    motorStartTime = 0;
-  } else if (millis() - motorStartTime > 5000) { // 5s Safety Timeout
-    stopMotorByIdx(activeMotorIdx);
-    Serial.printf("TIMEOUT M%d\n", activeMotorIdx + 1);
-    
-    // Also notify of timeout/failure?
-    takeDataPiPublish("ecyce/medilink/status", "error_timeout");
-
-    isRunning = false;
-    motorStartTime = 0;
+    waitForPiezoRelease = false;
   }
 }
 

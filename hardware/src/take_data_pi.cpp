@@ -18,9 +18,28 @@ static unsigned long lastMqttReconnectTryMs = 0;
 static constexpr unsigned long MQTT_RECONNECT_INTERVAL_MS = 3000;
 
 static bool parsePiPayloadToRunCommand(const char *payload, char *outCommand, size_t outSize) {
-  int counts[MOTOR_COUNT] = {0, 0, 0, 0};
   const char *cursor = payload;
 
+  // Skip leading spaces
+  while (*cursor && isspace((unsigned char)*cursor)) {
+    cursor++;
+  }
+
+  // Handle direct STOP command
+  if (strncmp(cursor, "STOP", 4) == 0) {
+    strncpy(outCommand, "STOP", outSize - 1);
+    outCommand[outSize - 1] = '\0';
+    return true;
+  }
+  
+  if (strncmp(cursor, "RESET", 5) == 0) {
+    strncpy(outCommand, "RESET", outSize - 1);
+    outCommand[outSize - 1] = '\0';
+    return true;
+  }
+
+  int counts[MOTOR_COUNT] = {0, 0, 0, 0};
+  
   while (*cursor) {
     while (*cursor && isspace((unsigned char)*cursor)) {
       cursor++;
